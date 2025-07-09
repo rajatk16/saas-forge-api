@@ -6,9 +6,6 @@ import { UserModule } from './user/user.module';
 import { MongooseModule } from '@nestjs/mongoose';
 
 @Module({
-  exports: [],
-  providers: [],
-  controllers: [],
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
