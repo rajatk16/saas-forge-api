@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { UserController } from './user.controller';
 import { JwtAuthGuard } from './guards/JwtAuth.guard';
 import { Request } from 'express';
+import { UserService } from './user.service';
 
 describe('UserController', () => {
   let controller: UserController;
@@ -20,6 +21,10 @@ describe('UserController', () => {
     handleRequest: jest.fn(),
   };
 
+  const mockUserService = {
+    getAllUsers: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UserController],
@@ -27,6 +32,10 @@ describe('UserController', () => {
         {
           provide: JwtAuthGuard,
           useValue: mockJwtAuthGuard,
+        },
+        {
+          provide: UserService,
+          useValue: mockUserService,
         },
         Reflector,
       ],
@@ -212,6 +221,141 @@ describe('UserController', () => {
         const result = controller.getCurrentUser(testCase);
         expect(result).toEqual(testCase.user);
       });
+    });
+  });
+
+  describe('getAllUsers', () => {
+    const mockUsers = [
+      {
+        id: '507f1f77bcf86cd799439011',
+        email: 'user1@example.com',
+        roles: ['USER'],
+        isActive: true,
+      },
+      {
+        id: '507f1f77bcf86cd799439012',
+        email: 'user2@example.com',
+        roles: ['USER'],
+        isActive: true,
+      },
+      {
+        id: '507f1f77bcf86cd799439013',
+        email: 'admin@example.com',
+        roles: ['ADMIN'],
+        isActive: true,
+      },
+    ];
+
+    it('should return all users when service returns users successfully', async () => {
+      mockUserService.getAllUsers.mockResolvedValue(mockUsers);
+
+      const result = await controller.getAllUsers();
+
+      expect(result).toEqual(mockUsers);
+      expect(mockUserService.getAllUsers).toHaveBeenCalledTimes(1);
+      expect(mockUserService.getAllUsers).toHaveBeenCalledWith();
+    });
+
+    it('should return empty array when service returns empty array', async () => {
+      mockUserService.getAllUsers.mockResolvedValue([]);
+
+      const result = await controller.getAllUsers();
+
+      expect(result).toEqual([]);
+      expect(mockUserService.getAllUsers).toHaveBeenCalledTimes(1);
+      expect(mockUserService.getAllUsers).toHaveBeenCalledWith();
+    });
+
+    it('should return single user when service returns only one user', async () => {
+      const singleUser = [mockUsers[0]];
+      mockUserService.getAllUsers.mockResolvedValue(singleUser);
+
+      const result = await controller.getAllUsers();
+
+      expect(result).toEqual(singleUser);
+      expect(result).toHaveLength(1);
+      expect(mockUserService.getAllUsers).toHaveBeenCalledTimes(1);
+    });
+
+    it('should propagate error when service throws error', async () => {
+      const errorMessage = 'Database connection failed';
+      mockUserService.getAllUsers.mockRejectedValue(new Error(errorMessage));
+
+      await expect(controller.getAllUsers()).rejects.toThrow(errorMessage);
+      expect(mockUserService.getAllUsers).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle service returning null', async () => {
+      mockUserService.getAllUsers.mockResolvedValue(null);
+
+      const result = await controller.getAllUsers();
+
+      expect(result).toBeNull();
+      expect(mockUserService.getAllUsers).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle service returning undefined', async () => {
+      mockUserService.getAllUsers.mockResolvedValue(undefined);
+
+      const result = await controller.getAllUsers();
+
+      expect(result).toBeUndefined();
+      expect(mockUserService.getAllUsers).toHaveBeenCalledTimes(1);
+    });
+
+    it('should verify that getAllUsers is async', async () => {
+      mockUserService.getAllUsers.mockResolvedValue(mockUsers);
+
+      const result = controller.getAllUsers();
+
+      expect(result).toBeInstanceOf(Promise);
+
+      const resolvedResult = await result;
+      expect(resolvedResult).toEqual(mockUsers);
+    });
+
+    it('should handle large dataset', async () => {
+      const largeUserSet = Array.from({ length: 1000 }, (_, index) => ({
+        id: `507f1f77bcf86cd79943${index.toString().padStart(4, '0')}`,
+        email: `user${index}@example.com`,
+        roles: ['USER'],
+        isActive: true,
+      }));
+
+      mockUserService.getAllUsers.mockResolvedValue(largeUserSet);
+
+      const result = await controller.getAllUsers();
+
+      expect(result).toEqual(largeUserSet);
+      expect(result).toHaveLength(1000);
+      expect(mockUserService.getAllUsers).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle different user role combinations', async () => {
+      const diverseUsers = [
+        { id: '1', email: 'user@example.com', roles: ['USER'], isActive: true },
+        { id: '2', email: 'admin@example.com', roles: ['ADMIN'], isActive: true },
+        { id: '3', email: 'superadmin@example.com', roles: ['ADMIN', 'SUPER_ADMIN'], isActive: true },
+        { id: '4', email: 'inactive@example.com', roles: ['USER'], isActive: false },
+      ];
+
+      mockUserService.getAllUsers.mockResolvedValue(diverseUsers);
+
+      const result = await controller.getAllUsers();
+
+      expect(result).toEqual(diverseUsers);
+      expect(result).toHaveLength(4);
+      expect(mockUserService.getAllUsers).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not modify returned data from service', async () => {
+      const originalUsers = [...mockUsers];
+      mockUserService.getAllUsers.mockResolvedValue(mockUsers);
+
+      const result = await controller.getAllUsers();
+
+      expect(result).toEqual(originalUsers);
+      expect(mockUsers).toEqual(originalUsers); // Ensure original wasn't modified
     });
   });
 });

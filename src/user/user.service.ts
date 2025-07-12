@@ -25,4 +25,8 @@ export class UserService {
 
     return user;
   }
+
+  async getAllUsers() {
+    return this.userModel.find().select('-password');
+  }
 }
