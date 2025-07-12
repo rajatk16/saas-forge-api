@@ -2,6 +2,7 @@ import * as Joi from 'joi';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
+import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { MongooseModule } from '@nestjs/mongoose';
 
@@ -19,11 +20,12 @@ import { MongooseModule } from '@nestjs/mongoose';
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
-        uri: config.get<string>('MONGODB_URI'),
+        uri: config.getOrThrow<string>('MONGODB_URI'),
       }),
       inject: [ConfigService],
     }),
     UserModule,
+    AuthModule,
   ],
 })
 export class AppModule {}
