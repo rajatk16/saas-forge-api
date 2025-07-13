@@ -1,17 +1,16 @@
-import { promisify } from 'util';
+import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
-import { randomBytes, scrypt as _scrypt } from 'crypto';
+import { ConfigService } from '@nestjs/config';
 import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 
 import { UserService } from '../user/user.service';
 
-const scrypt = promisify(_scrypt);
-
 @Injectable()
 export class AuthService {
   constructor(
-    private userService: UserService,
     private jwtService: JwtService,
+    private userService: UserService,
+    private configService: ConfigService,
   ) {}
 
   async register(email: string, password: string) {
@@ -21,11 +20,8 @@ export class AuthService {
       throw new ConflictException(`User with email ${email} already exists`);
     }
 
-    const salt = randomBytes(8).toString('hex');
-    const hash = (await scrypt(password, salt, 32)) as Buffer;
-    const hashedPassword = `${salt}.${hash.toString('hex')}`;
-
-    const newUser = await this.userService.create(email, hashedPassword);
+    const hashed = await bcrypt.hash(password, 10);
+    const newUser = await this.userService.create(email, hashed);
     return newUser;
   }
 
@@ -36,13 +32,17 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const [salt, storedHash] = user.password.split('.');
-    const hash = (await scrypt(password, salt, 32)) as Buffer;
-
-    if (storedHash !== hash.toString('hex')) {
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    const tokens = this.generateTokens(user);
+    await this.updateRefreshToken(user.id as string, tokens.refreshToken);
+    return tokens;
+  }
+
+  generateTokens(user: any) {
     const payload = {
       sub: user._id,
       email: user.email,
@@ -50,8 +50,17 @@ export class AuthService {
       isActive: user.isActive,
     };
 
-    return {
-      accessToken: this.jwtService.sign(payload),
-    };
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '1h' });
+    const refreshToken = this.jwtService.sign(payload, {
+      expiresIn: '7d',
+      secret: this.configService.get('JWT_REFRESH_SECRET'),
+    });
+
+    return { accessToken, refreshToken };
+  }
+
+  async updateRefreshToken(userId: string, refreshToken: string) {
+    const hashedRefreshToken = await bcrypt.hash(refreshToken, 10);
+    await this.userService.updateRefreshToken(userId, hashedRefreshToken);
   }
 }

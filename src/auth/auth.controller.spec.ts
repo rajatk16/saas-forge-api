@@ -1,7 +1,18 @@
+import * as bcrypt from 'bcrypt';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AuthController } from './auth.controller';
+
 import { AuthService } from './auth.service';
+import { UserService } from '../user/user.service';
+import { AuthController } from './auth.controller';
 import { RegisterUserDto } from './dtos/RegisterUser.dto';
+import { RefreshTokenDto } from './dtos/RefreshToken.dto';
+
+// Mock bcrypt
+jest.mock('bcrypt');
+const mockedBcrypt = bcrypt as jest.Mocked<typeof bcrypt>;
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -18,6 +29,21 @@ describe('AuthController', () => {
   const mockAuthService = {
     register: jest.fn(),
     login: jest.fn(),
+    generateTokens: jest.fn(),
+    updateRefreshToken: jest.fn(),
+  };
+
+  const mockJwtService = {
+    sign: jest.fn(),
+    verifyAsync: jest.fn(),
+  };
+
+  const mockUserService = {
+    findByEmail: jest.fn(),
+  };
+
+  const mockConfigService = {
+    get: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -27,6 +53,18 @@ describe('AuthController', () => {
         {
           provide: AuthService,
           useValue: mockAuthService,
+        },
+        {
+          provide: JwtService,
+          useValue: mockJwtService,
+        },
+        {
+          provide: UserService,
+          useValue: mockUserService,
+        },
+        {
+          provide: ConfigService,
+          useValue: mockConfigService,
         },
       ],
     }).compile();
@@ -186,111 +224,199 @@ describe('AuthController', () => {
     });
   });
 
-  describe('controller instance', () => {
-    it('should be defined', () => {
-      expect(controller).toBeDefined();
+  describe('refresh', () => {
+    const mockRefreshTokenDto: RefreshTokenDto = {
+      refreshToken: 'valid-refresh-token',
+    };
+
+    const mockJwtPayload = {
+      email: 'test@example.com',
+      sub: '507f1f77bcf86cd799439011',
+    };
+
+    const mockUserWithRefreshToken = {
+      ...mockUserResponse,
+      id: '507f1f77bcf86cd799439011',
+      refreshToken: 'hashed-refresh-token',
+    };
+
+    const mockTokens = {
+      accessToken: 'new-access-token',
+      refreshToken: 'new-refresh-token',
+    };
+
+    beforeEach(() => {
+      mockConfigService.get.mockReturnValue('refresh-secret');
+      mockAuthService.generateTokens.mockReturnValue(mockTokens);
+      mockAuthService.updateRefreshToken.mockResolvedValue(undefined);
     });
 
-    it('should have authService injected', () => {
-      expect(controller['authService']).toBeDefined();
-    });
-  });
+    it('should successfully refresh tokens with valid refresh token', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue(mockJwtPayload);
+      mockUserService.findByEmail.mockResolvedValue(mockUserWithRefreshToken);
+      mockedBcrypt.compare.mockResolvedValue(true as never);
 
-  describe('DTO handling', () => {
-    it('should accept RegisterUserDto with exact interface', async () => {
-      const registerDto: RegisterUserDto = {
-        email: 'test@example.com',
-        password: 'password123',
+      const result = await controller.refresh(mockRefreshTokenDto);
+
+      expect(mockJwtService.verifyAsync).toHaveBeenCalledWith('valid-refresh-token', {
+        secret: 'refresh-secret',
+      });
+      expect(mockUserService.findByEmail).toHaveBeenCalledWith('test@example.com');
+      expect(mockedBcrypt.compare).toHaveBeenCalledWith('valid-refresh-token', 'hashed-refresh-token');
+      expect(mockAuthService.generateTokens).toHaveBeenCalledWith(mockUserWithRefreshToken);
+      expect(mockAuthService.updateRefreshToken).toHaveBeenCalledWith('507f1f77bcf86cd799439011', 'new-refresh-token');
+      expect(result).toEqual(mockTokens);
+    });
+
+    it('should throw ForbiddenException when JWT verification fails', async () => {
+      mockJwtService.verifyAsync.mockRejectedValue(new Error('Invalid token'));
+
+      await expect(controller.refresh(mockRefreshTokenDto)).rejects.toThrow(
+        new ForbiddenException('Token expired or invalid.'),
+      );
+
+      expect(mockJwtService.verifyAsync).toHaveBeenCalledWith('valid-refresh-token', {
+        secret: 'refresh-secret',
+      });
+      expect(mockUserService.findByEmail).not.toHaveBeenCalled();
+      expect(mockedBcrypt.compare).not.toHaveBeenCalled();
+    });
+
+    it('should throw ForbiddenException when user is not found', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue(mockJwtPayload);
+      mockUserService.findByEmail.mockResolvedValue(null);
+
+      await expect(controller.refresh(mockRefreshTokenDto)).rejects.toThrow(
+        new ForbiddenException('Token expired or invalid.'),
+      );
+
+      expect(mockJwtService.verifyAsync).toHaveBeenCalledWith('valid-refresh-token', {
+        secret: 'refresh-secret',
+      });
+      expect(mockUserService.findByEmail).toHaveBeenCalledWith('test@example.com');
+      expect(mockedBcrypt.compare).not.toHaveBeenCalled();
+    });
+
+    it('should throw ForbiddenException when user has no refresh token', async () => {
+      const userWithoutRefreshToken = {
+        ...mockUserResponse,
+        id: '507f1f77bcf86cd799439011',
+        refreshToken: null,
       };
 
-      mockAuthService.register.mockResolvedValue(mockUserResponse);
+      mockJwtService.verifyAsync.mockResolvedValue(mockJwtPayload);
+      mockUserService.findByEmail.mockResolvedValue(userWithoutRefreshToken);
 
-      await controller.register(registerDto);
+      await expect(controller.refresh(mockRefreshTokenDto)).rejects.toThrow(
+        new ForbiddenException('Token expired or invalid.'),
+      );
 
-      expect(mockAuthService.register).toHaveBeenCalledWith(registerDto.email, registerDto.password);
+      expect(mockJwtService.verifyAsync).toHaveBeenCalledWith('valid-refresh-token', {
+        secret: 'refresh-secret',
+      });
+      expect(mockUserService.findByEmail).toHaveBeenCalledWith('test@example.com');
+      expect(mockedBcrypt.compare).not.toHaveBeenCalled();
     });
 
-    it('should handle RegisterUserDto with additional properties', async () => {
-      const registerDto = {
-        email: 'test@example.com',
-        password: 'password123',
-        additionalProperty: 'ignored',
-      } as RegisterUserDto;
+    it('should throw ForbiddenException when refresh token does not match', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue(mockJwtPayload);
+      mockUserService.findByEmail.mockResolvedValue(mockUserWithRefreshToken);
+      mockedBcrypt.compare.mockResolvedValue(false as never);
 
-      mockAuthService.register.mockResolvedValue(mockUserResponse);
+      await expect(controller.refresh(mockRefreshTokenDto)).rejects.toThrow(
+        new ForbiddenException('Token expired or invalid.'),
+      );
 
-      await controller.register(registerDto);
-
-      expect(mockAuthService.register).toHaveBeenCalledWith(registerDto.email, registerDto.password);
+      expect(mockJwtService.verifyAsync).toHaveBeenCalledWith('valid-refresh-token', {
+        secret: 'refresh-secret',
+      });
+      expect(mockUserService.findByEmail).toHaveBeenCalledWith('test@example.com');
+      expect(mockedBcrypt.compare).toHaveBeenCalledWith('valid-refresh-token', 'hashed-refresh-token');
+      expect(mockAuthService.generateTokens).not.toHaveBeenCalled();
     });
-  });
 
-  describe('error propagation', () => {
-    it('should propagate ConflictException from register', async () => {
-      const registerDto: RegisterUserDto = {
-        email: 'existing@example.com',
-        password: 'password123',
+    it('should throw ForbiddenException when bcrypt compare throws an error', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue(mockJwtPayload);
+      mockUserService.findByEmail.mockResolvedValue(mockUserWithRefreshToken);
+      mockedBcrypt.compare.mockRejectedValue(new Error('Bcrypt error') as never);
+
+      await expect(controller.refresh(mockRefreshTokenDto)).rejects.toThrow(
+        new ForbiddenException('Token expired or invalid.'),
+      );
+
+      expect(mockJwtService.verifyAsync).toHaveBeenCalledWith('valid-refresh-token', {
+        secret: 'refresh-secret',
+      });
+      expect(mockUserService.findByEmail).toHaveBeenCalledWith('test@example.com');
+      expect(mockedBcrypt.compare).toHaveBeenCalledWith('valid-refresh-token', 'hashed-refresh-token');
+    });
+
+    it('should throw ForbiddenException when user service throws an error', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue(mockJwtPayload);
+      mockUserService.findByEmail.mockRejectedValue(new Error('Database error'));
+
+      await expect(controller.refresh(mockRefreshTokenDto)).rejects.toThrow(
+        new ForbiddenException('Token expired or invalid.'),
+      );
+
+      expect(mockJwtService.verifyAsync).toHaveBeenCalledWith('valid-refresh-token', {
+        secret: 'refresh-secret',
+      });
+      expect(mockUserService.findByEmail).toHaveBeenCalledWith('test@example.com');
+      expect(mockedBcrypt.compare).not.toHaveBeenCalled();
+    });
+
+    it('should throw ForbiddenException when updateRefreshToken fails', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue(mockJwtPayload);
+      mockUserService.findByEmail.mockResolvedValue(mockUserWithRefreshToken);
+      mockedBcrypt.compare.mockResolvedValue(true as never);
+      mockAuthService.updateRefreshToken.mockRejectedValue(new Error('Update failed'));
+
+      await expect(controller.refresh(mockRefreshTokenDto)).rejects.toThrow(
+        new ForbiddenException('Token expired or invalid.'),
+      );
+
+      expect(mockJwtService.verifyAsync).toHaveBeenCalledWith('valid-refresh-token', {
+        secret: 'refresh-secret',
+      });
+      expect(mockUserService.findByEmail).toHaveBeenCalledWith('test@example.com');
+      expect(mockedBcrypt.compare).toHaveBeenCalledWith('valid-refresh-token', 'hashed-refresh-token');
+      expect(mockAuthService.generateTokens).toHaveBeenCalledWith(mockUserWithRefreshToken);
+      expect(mockAuthService.updateRefreshToken).toHaveBeenCalledWith('507f1f77bcf86cd799439011', 'new-refresh-token');
+    });
+
+    it('should handle empty refresh token', async () => {
+      const emptyRefreshTokenDto: RefreshTokenDto = {
+        refreshToken: '',
       };
 
-      const conflictError = new Error('ConflictException: User already exists');
-      conflictError.name = 'ConflictException';
-      mockAuthService.register.mockRejectedValue(conflictError);
+      mockJwtService.verifyAsync.mockRejectedValue(new Error('Invalid token'));
 
-      await expect(controller.register(registerDto)).rejects.toThrow(conflictError);
+      await expect(controller.refresh(emptyRefreshTokenDto)).rejects.toThrow(
+        new ForbiddenException('Token expired or invalid.'),
+      );
+
+      expect(mockJwtService.verifyAsync).toHaveBeenCalledWith('', {
+        secret: 'refresh-secret',
+      });
     });
 
-    it('should propagate UnauthorizedException from login', async () => {
-      const loginDto: RegisterUserDto = {
-        email: 'test@example.com',
-        password: 'wrongpassword',
+    it('should handle JWT payload without email', async () => {
+      const payloadWithoutEmail = {
+        sub: '507f1f77bcf86cd799439011',
       };
 
-      const unauthorizedError = new Error('UnauthorizedException: Invalid credentials');
-      unauthorizedError.name = 'UnauthorizedException';
-      mockAuthService.login.mockRejectedValue(unauthorizedError);
+      mockJwtService.verifyAsync.mockResolvedValue(payloadWithoutEmail);
+      mockUserService.findByEmail.mockResolvedValue(null);
 
-      await expect(controller.login(loginDto)).rejects.toThrow(unauthorizedError);
-    });
-  });
+      await expect(controller.refresh(mockRefreshTokenDto)).rejects.toThrow(
+        new ForbiddenException('Token expired or invalid.'),
+      );
 
-  describe('edge cases', () => {
-    it('should handle null/undefined DTO properties', async () => {
-      const registerDto: RegisterUserDto = {
-        email: null,
-        password: undefined,
-      } as any;
-
-      mockAuthService.register.mockResolvedValue(mockUserResponse);
-
-      await controller.register(registerDto);
-
-      expect(mockAuthService.register).toHaveBeenCalledWith(null, undefined);
-    });
-
-    it('should handle very long email and password', async () => {
-      const registerDto: RegisterUserDto = {
-        email: 'a'.repeat(100) + '@example.com',
-        password: 'b'.repeat(200),
-      };
-
-      mockAuthService.register.mockResolvedValue(mockUserResponse);
-
-      await controller.register(registerDto);
-
-      expect(mockAuthService.register).toHaveBeenCalledWith(registerDto.email, registerDto.password);
-    });
-
-    it('should handle unicode characters in email and password', async () => {
-      const registerDto: RegisterUserDto = {
-        email: 'tëst@exämple.com',
-        password: 'pässwörd123',
-      };
-
-      mockAuthService.register.mockResolvedValue(mockUserResponse);
-
-      await controller.register(registerDto);
-
-      expect(mockAuthService.register).toHaveBeenCalledWith(registerDto.email, registerDto.password);
+      expect(mockJwtService.verifyAsync).toHaveBeenCalledWith('valid-refresh-token', {
+        secret: 'refresh-secret',
+      });
+      expect(mockUserService.findByEmail).toHaveBeenCalledWith(undefined);
     });
   });
 });

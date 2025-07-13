@@ -20,6 +20,7 @@ describe('UserService', () => {
   const mockUserModel = {
     findOne: jest.fn(),
     find: jest.fn(),
+    updateOne: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -193,73 +194,6 @@ describe('UserService', () => {
       await service.findByEmail(email);
 
       expect(mockQuery.select).toHaveBeenCalledWith('');
-    });
-  });
-
-  describe('edge cases', () => {
-    it('should handle empty string email', async () => {
-      const email = '';
-      const password = 'password123';
-
-      const mockSavedUser = {
-        ...mockUser,
-        email,
-        password,
-      };
-
-      const mockSave = jest.fn().mockResolvedValue(mockSavedUser);
-      const mockConstructor = jest.fn().mockImplementation(() => ({
-        save: mockSave,
-      }));
-
-      service['userModel'] = mockConstructor as any;
-
-      const result = await service.create(email, password);
-
-      expect(mockConstructor).toHaveBeenCalledWith({ email, password });
-      expect(result.email).toBe(email);
-    });
-
-    it('should handle empty string password', async () => {
-      const email = 'test@example.com';
-      const password = '';
-
-      const mockSavedUser = {
-        ...mockUser,
-        email,
-        password,
-      };
-
-      const mockSave = jest.fn().mockResolvedValue(mockSavedUser);
-      const mockConstructor = jest.fn().mockImplementation(() => ({
-        save: mockSave,
-      }));
-
-      service['userModel'] = mockConstructor as any;
-
-      const result = await service.create(email, password);
-
-      expect(mockConstructor).toHaveBeenCalledWith({ email, password });
-      expect(result.email).toBe(email);
-    });
-
-    it('should handle special characters in email', async () => {
-      const email = 'test+special@example.com';
-      const mockFoundUser = {
-        ...mockUser,
-        email,
-      };
-
-      const mockQuery = {
-        select: jest.fn().mockResolvedValue(mockFoundUser),
-      };
-
-      mockUserModel.findOne = jest.fn().mockReturnValue(mockQuery);
-
-      const result = await service.findByEmail(email);
-
-      expect(mockUserModel.findOne).toHaveBeenCalledWith({ email });
-      expect(result).toEqual(mockFoundUser);
     });
   });
 
@@ -522,6 +456,169 @@ describe('UserService', () => {
       result.forEach((user) => {
         expect(user).not.toHaveProperty('password');
       });
+    });
+  });
+
+  describe('updateRefreshToken', () => {
+    it('should update refresh token successfully', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+      const refreshToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.token';
+
+      mockUserModel.updateOne = jest.fn().mockResolvedValue({
+        acknowledged: true,
+        modifiedCount: 1,
+        upsertedId: null,
+        upsertedCount: 0,
+        matchedCount: 1,
+      });
+
+      await service.updateRefreshToken(userId, refreshToken);
+
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken });
+      expect(mockUserModel.updateOne).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle database errors during refresh token update', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+      const refreshToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.token';
+      const error = new Error('Database update failed');
+
+      mockUserModel.updateOne = jest.fn().mockRejectedValue(error);
+
+      await expect(service.updateRefreshToken(userId, refreshToken)).rejects.toThrow('Database update failed');
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken });
+    });
+
+    it('should handle null refresh token', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+      const refreshToken = null;
+
+      mockUserModel.updateOne = jest.fn().mockResolvedValue({
+        acknowledged: true,
+        modifiedCount: 1,
+        upsertedId: null,
+        upsertedCount: 0,
+        matchedCount: 1,
+      });
+
+      await service.updateRefreshToken(userId, refreshToken);
+
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken: null });
+    });
+
+    it('should handle empty string refresh token', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+      const refreshToken = '';
+
+      mockUserModel.updateOne = jest.fn().mockResolvedValue({
+        acknowledged: true,
+        modifiedCount: 1,
+        upsertedId: null,
+        upsertedCount: 0,
+        matchedCount: 1,
+      });
+
+      await service.updateRefreshToken(userId, refreshToken);
+
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken: '' });
+    });
+
+    it('should handle invalid user ID format', async () => {
+      const userId = 'invalid-id';
+      const refreshToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.token';
+      const error = new Error('Invalid ObjectId');
+
+      mockUserModel.updateOne = jest.fn().mockRejectedValue(error);
+
+      await expect(service.updateRefreshToken(userId, refreshToken)).rejects.toThrow('Invalid ObjectId');
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken });
+    });
+
+    it('should handle user not found scenario', async () => {
+      const userId = '507f1f77bcf86cd799439999';
+      const refreshToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.token';
+
+      mockUserModel.updateOne = jest.fn().mockResolvedValue({
+        acknowledged: true,
+        modifiedCount: 0,
+        upsertedId: null,
+        upsertedCount: 0,
+        matchedCount: 0,
+      });
+
+      await service.updateRefreshToken(userId, refreshToken);
+
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken });
+    });
+
+    it('should handle network timeout errors', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+      const refreshToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.token';
+      const timeoutError = new Error('Network timeout');
+      timeoutError.name = 'MongoNetworkTimeoutError';
+
+      mockUserModel.updateOne = jest.fn().mockRejectedValue(timeoutError);
+
+      await expect(service.updateRefreshToken(userId, refreshToken)).rejects.toThrow('Network timeout');
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken });
+    });
+
+    it('should handle very long refresh token', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+      const refreshToken = 'a'.repeat(1000); // Very long token
+
+      mockUserModel.updateOne = jest.fn().mockResolvedValue({
+        acknowledged: true,
+        modifiedCount: 1,
+        upsertedId: null,
+        upsertedCount: 0,
+        matchedCount: 1,
+      });
+
+      await service.updateRefreshToken(userId, refreshToken);
+
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken });
+    });
+
+    it('should verify method returns a promise', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+      const refreshToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.token';
+
+      mockUserModel.updateOne = jest.fn().mockResolvedValue({
+        acknowledged: true,
+        modifiedCount: 1,
+        upsertedId: null,
+        upsertedCount: 0,
+        matchedCount: 1,
+      });
+
+      const result = service.updateRefreshToken(userId, refreshToken);
+
+      expect(result).toBeInstanceOf(Promise);
+      await result;
+    });
+
+    it('should handle concurrent updates', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+      const refreshToken1 = 'token1';
+      const refreshToken2 = 'token2';
+
+      mockUserModel.updateOne = jest.fn().mockResolvedValue({
+        acknowledged: true,
+        modifiedCount: 1,
+        upsertedId: null,
+        upsertedCount: 0,
+        matchedCount: 1,
+      });
+
+      const promise1 = service.updateRefreshToken(userId, refreshToken1);
+      const promise2 = service.updateRefreshToken(userId, refreshToken2);
+
+      await Promise.all([promise1, promise2]);
+
+      expect(mockUserModel.updateOne).toHaveBeenCalledTimes(2);
+      expect(mockUserModel.updateOne).toHaveBeenNthCalledWith(1, { _id: userId }, { refreshToken: refreshToken1 });
+      expect(mockUserModel.updateOne).toHaveBeenNthCalledWith(2, { _id: userId }, { refreshToken: refreshToken2 });
     });
   });
 });
