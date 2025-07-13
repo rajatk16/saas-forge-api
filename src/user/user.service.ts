@@ -29,4 +29,8 @@ export class UserService {
   async getAllUsers() {
     return this.userModel.find().select('-password');
   }
+
+  async updateRefreshToken(userId: string, refreshToken: string | null) {
+    await this.userModel.updateOne({ _id: userId }, { refreshToken });
+  }
 }

@@ -1,12 +1,11 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
+import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
+
 import { AuthService } from './auth.service';
 import { UserService } from '../user/user.service';
-import { randomBytes, scrypt as _scrypt } from 'crypto';
-import { promisify } from 'util';
-
-const scrypt = promisify(_scrypt);
+import { ConfigService } from '@nestjs/config';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -31,10 +30,15 @@ describe('AuthService', () => {
   const mockUserService = {
     findByEmail: jest.fn(),
     create: jest.fn(),
+    updateRefreshToken: jest.fn(),
   };
 
   const mockJwtService = {
     sign: jest.fn(),
+  };
+
+  const mockConfigService = {
+    get: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -48,6 +52,10 @@ describe('AuthService', () => {
         {
           provide: JwtService,
           useValue: mockJwtService,
+        },
+        {
+          provide: ConfigService,
+          useValue: mockConfigService,
         },
       ],
     }).compile();
@@ -72,12 +80,6 @@ describe('AuthService', () => {
       expect(mockUserService.findByEmail).toHaveBeenCalledWith(email);
       expect(mockUserService.create).toHaveBeenCalledWith(email, expect.any(String));
       expect(result).toEqual(mockUserResponse);
-
-      // Verify password was hashed
-      const createCall = mockUserService.create.mock.calls[0];
-      const hashedPassword = createCall[1];
-      expect(hashedPassword).toContain('.');
-      expect(hashedPassword.split('.').length).toBe(2);
     });
 
     it('should throw ConflictException when user already exists', async () => {
@@ -117,9 +119,7 @@ describe('AuthService', () => {
     it('should successfully login with valid credentials', async () => {
       const email = 'test@example.com';
       const password = 'password123';
-      const salt = randomBytes(8).toString('hex');
-      const hash = (await scrypt(password, salt, 32)) as Buffer;
-      const hashedPassword = `${salt}.${hash.toString('hex')}`;
+      const hashedPassword = await bcrypt.hash(password, 10);
 
       const userWithPassword = {
         ...mockUser,
@@ -132,13 +132,30 @@ describe('AuthService', () => {
       const result = await service.login(email, password);
 
       expect(mockUserService.findByEmail).toHaveBeenCalledWith(email, true);
-      expect(mockJwtService.sign).toHaveBeenCalledWith({
-        sub: userWithPassword._id,
-        email: userWithPassword.email,
-        roles: userWithPassword.roles,
-        isActive: userWithPassword.isActive,
+      expect(mockJwtService.sign).toHaveBeenNthCalledWith(
+        1,
+        {
+          sub: userWithPassword._id,
+          email: userWithPassword.email,
+          roles: userWithPassword.roles,
+          isActive: userWithPassword.isActive,
+        },
+        { expiresIn: '1h' },
+      );
+      expect(mockJwtService.sign).toHaveBeenNthCalledWith(
+        2,
+        {
+          sub: userWithPassword._id,
+          email: userWithPassword.email,
+          roles: userWithPassword.roles,
+          isActive: userWithPassword.isActive,
+        },
+        { expiresIn: '7d', secret: undefined },
+      );
+      expect(result).toEqual({
+        accessToken: 'jwt-token-123',
+        refreshToken: 'jwt-token-123',
       });
-      expect(result).toEqual({ accessToken: 'jwt-token-123' });
     });
 
     it('should throw UnauthorizedException when user does not exist', async () => {
@@ -157,9 +174,7 @@ describe('AuthService', () => {
     it('should throw UnauthorizedException when password is invalid', async () => {
       const email = 'test@example.com';
       const password = 'wrongpassword';
-      const salt = randomBytes(8).toString('hex');
-      const hash = (await scrypt('correctpassword', salt, 32)) as Buffer;
-      const hashedPassword = `${salt}.${hash.toString('hex')}`;
+      const hashedPassword = await bcrypt.hash('correctpassword', 10);
 
       const userWithPassword = {
         ...mockUser,
@@ -201,9 +216,7 @@ describe('AuthService', () => {
     it('should handle JWT signing failure', async () => {
       const email = 'test@example.com';
       const password = 'password123';
-      const salt = randomBytes(8).toString('hex');
-      const hash = (await scrypt(password, salt, 32)) as Buffer;
-      const hashedPassword = `${salt}.${hash.toString('hex')}`;
+      const hashedPassword = await bcrypt.hash(password, 10);
 
       const userWithPassword = {
         ...mockUser,
@@ -235,23 +248,6 @@ describe('AuthService', () => {
 
       expect(firstCall).not.toBe(secondCall);
       expect(firstCall.split('.')[0]).not.toBe(secondCall.split('.')[0]); // Different salts
-    });
-
-    it('should create hash with correct format', async () => {
-      const email = 'test@example.com';
-      const password = 'password123';
-
-      mockUserService.findByEmail.mockResolvedValue(null);
-      mockUserService.create.mockResolvedValue(mockUserResponse);
-
-      await service.register(email, password);
-
-      const hashedPassword = mockUserService.create.mock.calls[0][1];
-      const parts = hashedPassword.split('.');
-
-      expect(parts.length).toBe(2);
-      expect(parts[0].length).toBe(16); // Salt length
-      expect(parts[1].length).toBe(64); // Hash length (32 bytes * 2 hex chars)
     });
   });
 
