@@ -621,4 +621,109 @@ describe('UserService', () => {
       expect(mockUserModel.updateOne).toHaveBeenNthCalledWith(2, { _id: userId }, { refreshToken: refreshToken2 });
     });
   });
+
+  describe('removeRefreshToken', () => {
+    it('should remove refresh token successfully', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+
+      mockUserModel.updateOne = jest.fn().mockResolvedValue({
+        acknowledged: true,
+        modifiedCount: 1,
+        upsertedId: null,
+        upsertedCount: 0,
+        matchedCount: 1,
+      });
+
+      await service.removeRefreshToken(userId);
+
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken: null });
+      expect(mockUserModel.updateOne).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle database errors during refresh token removal', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+      const error = new Error('Database update failed');
+
+      mockUserModel.updateOne = jest.fn().mockRejectedValue(error);
+
+      await expect(service.removeRefreshToken(userId)).rejects.toThrow('Database update failed');
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken: null });
+    });
+
+    it('should handle invalid user ID format', async () => {
+      const userId = 'invalid-id';
+      const error = new Error('Invalid ObjectId');
+
+      mockUserModel.updateOne = jest.fn().mockRejectedValue(error);
+
+      await expect(service.removeRefreshToken(userId)).rejects.toThrow('Invalid ObjectId');
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken: null });
+    });
+
+    it('should handle user not found scenario', async () => {
+      const userId = '507f1f77bcf86cd799439999';
+
+      mockUserModel.updateOne = jest.fn().mockResolvedValue({
+        acknowledged: true,
+        modifiedCount: 0,
+        upsertedId: null,
+        upsertedCount: 0,
+        matchedCount: 0,
+      });
+
+      await service.removeRefreshToken(userId);
+
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken: null });
+    });
+
+    it('should handle network timeout errors', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+      const timeoutError = new Error('Network timeout');
+      timeoutError.name = 'MongoNetworkTimeoutError';
+
+      mockUserModel.updateOne = jest.fn().mockRejectedValue(timeoutError);
+
+      await expect(service.removeRefreshToken(userId)).rejects.toThrow('Network timeout');
+      expect(mockUserModel.updateOne).toHaveBeenCalledWith({ _id: userId }, { refreshToken: null });
+    });
+
+    it('should verify method returns a promise', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+
+      mockUserModel.updateOne = jest.fn().mockResolvedValue({
+        acknowledged: true,
+        modifiedCount: 1,
+        upsertedId: null,
+        upsertedCount: 0,
+        matchedCount: 1,
+      });
+
+      const result = service.removeRefreshToken(userId);
+
+      expect(result).toBeInstanceOf(Promise);
+      await result;
+    });
+
+    it('should handle concurrent removals', async () => {
+      const userId1 = '507f1f77bcf86cd799439011';
+      const userId2 = '507f1f77bcf86cd799439012';
+
+      mockUserModel.updateOne = jest.fn().mockResolvedValue({
+        acknowledged: true,
+        modifiedCount: 1,
+        upsertedId: null,
+        upsertedCount: 0,
+        matchedCount: 1,
+      });
+
+      const promise1 = service.removeRefreshToken(userId1);
+      const promise2 = service.removeRefreshToken(userId2);
+
+      await Promise.all([promise1, promise2]);
+
+      expect(mockUserModel.updateOne).toHaveBeenCalledTimes(2);
+      expect(mockUserModel.updateOne).toHaveBeenNthCalledWith(1, { _id: userId1 }, { refreshToken: null });
+      expect(mockUserModel.updateOne).toHaveBeenNthCalledWith(2, { _id: userId2 }, { refreshToken: null });
+    });
+  });
 });
