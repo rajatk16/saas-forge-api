@@ -25,7 +25,7 @@ export class AuthService {
     return newUser;
   }
 
-  async login(email: string, password: string): Promise<{ accessToken: string }> {
+  async login(email: string, password: string): Promise<{ accessToken: string; refreshToken: string }> {
     const user = await this.userService.findByEmail(email, true);
 
     if (!user) {

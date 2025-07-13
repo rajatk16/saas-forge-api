@@ -28,8 +28,11 @@
     "@nestjs/mongoose": "^11.0.3",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
+    "@types/bcrypt": "^5.0.2",
+    "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
+    "cookie-parser": "^1.4.7",
     "joi": "^17.13.3",
     "mongoose": "^8.16.2",
     "passport": "^0.7.0",
@@ -79,7 +82,10 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "**/*.(t|j)s",
+      "!**/*.spec.ts",
+      "!**/*.module.ts",
+      "!main.ts"
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"

@@ -40,6 +40,7 @@ describe('AuthController', () => {
 
   const mockUserService = {
     findByEmail: jest.fn(),
+    removeRefreshToken: jest.fn(),
   };
 
   const mockConfigService = {
@@ -148,7 +149,16 @@ describe('AuthController', () => {
   });
 
   describe('login', () => {
-    it('should successfully login with valid credentials', async () => {
+    let mockResponse: any;
+
+    beforeEach(() => {
+      mockResponse = {
+        cookie: jest.fn(),
+        clearCookie: jest.fn(),
+      };
+    });
+
+    it('should successfully login with valid credentials and set cookie', async () => {
       const loginDto: RegisterUserDto = {
         email: 'test@example.com',
         password: 'password123',
@@ -156,13 +166,20 @@ describe('AuthController', () => {
 
       const mockLoginResponse = {
         accessToken: 'jwt-token-123',
+        refreshToken: 'refresh-token-123',
       };
 
       mockAuthService.login.mockResolvedValue(mockLoginResponse);
 
-      const result = await controller.login(loginDto);
+      const result = await controller.login(mockResponse, loginDto);
 
       expect(mockAuthService.login).toHaveBeenCalledWith(loginDto.email, loginDto.password);
+      expect(mockResponse.cookie).toHaveBeenCalledWith('refresh_token', 'refresh-token-123', {
+        httpOnly: true,
+        secure: false, // Since NODE_ENV is not 'production' in tests
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
       expect(result).toEqual(mockLoginResponse);
     });
 
@@ -175,8 +192,9 @@ describe('AuthController', () => {
       const error = new Error('Invalid credentials');
       mockAuthService.login.mockRejectedValue(error);
 
-      await expect(controller.login(loginDto)).rejects.toThrow('Invalid credentials');
+      await expect(controller.login(mockResponse, loginDto)).rejects.toThrow('Invalid credentials');
       expect(mockAuthService.login).toHaveBeenCalledWith(loginDto.email, loginDto.password);
+      expect(mockResponse.cookie).not.toHaveBeenCalled();
     });
 
     it('should handle empty email and password', async () => {
@@ -188,8 +206,9 @@ describe('AuthController', () => {
       const error = new Error('Invalid credentials');
       mockAuthService.login.mockRejectedValue(error);
 
-      await expect(controller.login(loginDto)).rejects.toThrow('Invalid credentials');
+      await expect(controller.login(mockResponse, loginDto)).rejects.toThrow('Invalid credentials');
       expect(mockAuthService.login).toHaveBeenCalledWith('', '');
+      expect(mockResponse.cookie).not.toHaveBeenCalled();
     });
 
     it('should handle special characters in credentials', async () => {
@@ -200,13 +219,20 @@ describe('AuthController', () => {
 
       const mockLoginResponse = {
         accessToken: 'jwt-token-special-123',
+        refreshToken: 'refresh-token-special-123',
       };
 
       mockAuthService.login.mockResolvedValue(mockLoginResponse);
 
-      const result = await controller.login(loginDto);
+      const result = await controller.login(mockResponse, loginDto);
 
       expect(mockAuthService.login).toHaveBeenCalledWith(loginDto.email, loginDto.password);
+      expect(mockResponse.cookie).toHaveBeenCalledWith('refresh_token', 'refresh-token-special-123', {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
       expect(result).toEqual(mockLoginResponse);
     });
 
@@ -219,8 +245,40 @@ describe('AuthController', () => {
       const error = new Error('Database connection failed');
       mockAuthService.login.mockRejectedValue(error);
 
-      await expect(controller.login(loginDto)).rejects.toThrow('Database connection failed');
+      await expect(controller.login(mockResponse, loginDto)).rejects.toThrow('Database connection failed');
       expect(mockAuthService.login).toHaveBeenCalledWith(loginDto.email, loginDto.password);
+      expect(mockResponse.cookie).not.toHaveBeenCalled();
+    });
+
+    it('should set secure cookie in production environment', async () => {
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+
+      const loginDto: RegisterUserDto = {
+        email: 'test@example.com',
+        password: 'password123',
+      };
+
+      const mockLoginResponse = {
+        accessToken: 'jwt-token-123',
+        refreshToken: 'refresh-token-123',
+      };
+
+      mockAuthService.login.mockResolvedValue(mockLoginResponse);
+
+      const result = await controller.login(mockResponse, loginDto);
+
+      expect(mockAuthService.login).toHaveBeenCalledWith(loginDto.email, loginDto.password);
+      expect(mockResponse.cookie).toHaveBeenCalledWith('refresh_token', 'refresh-token-123', {
+        httpOnly: true,
+        secure: true, // Should be true in production
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+      expect(result).toEqual(mockLoginResponse);
+
+      // Restore original environment
+      process.env.NODE_ENV = originalEnv;
     });
   });
 
@@ -417,6 +475,106 @@ describe('AuthController', () => {
         secret: 'refresh-secret',
       });
       expect(mockUserService.findByEmail).toHaveBeenCalledWith(undefined);
+    });
+  });
+
+  describe('logout', () => {
+    let mockRequest: any;
+    let mockResponse: any;
+
+    beforeEach(() => {
+      mockRequest = {
+        user: {
+          userId: '507f1f77bcf86cd799439011',
+          email: 'test@example.com',
+          roles: ['USER'],
+          isActive: true,
+        },
+      };
+      mockResponse = {
+        clearCookie: jest.fn(),
+      };
+      mockUserService.removeRefreshToken.mockResolvedValue(undefined);
+    });
+
+    it('should successfully logout user and clear cookie', async () => {
+      const result = await controller.logout(mockRequest, mockResponse);
+
+      expect(mockUserService.removeRefreshToken).toHaveBeenCalledWith('507f1f77bcf86cd799439011');
+      expect(mockResponse.clearCookie).toHaveBeenCalledWith('refresh_token');
+      expect(result).toEqual({ message: 'Logged out successfully' });
+    });
+
+    it('should handle logout when user service throws an error', async () => {
+      const error = new Error('Database error');
+      mockUserService.removeRefreshToken.mockRejectedValue(error);
+
+      await expect(controller.logout(mockRequest, mockResponse)).rejects.toThrow('Database error');
+      expect(mockUserService.removeRefreshToken).toHaveBeenCalledWith('507f1f77bcf86cd799439011');
+      expect(mockResponse.clearCookie).not.toHaveBeenCalled();
+    });
+
+    it('should handle logout with different user ID', async () => {
+      mockRequest.user.userId = '507f1f77bcf86cd799439999';
+
+      const result = await controller.logout(mockRequest, mockResponse);
+
+      expect(mockUserService.removeRefreshToken).toHaveBeenCalledWith('507f1f77bcf86cd799439999');
+      expect(mockResponse.clearCookie).toHaveBeenCalledWith('refresh_token');
+      expect(result).toEqual({ message: 'Logged out successfully' });
+    });
+
+    it('should handle logout when removeRefreshToken fails silently', async () => {
+      mockUserService.removeRefreshToken.mockResolvedValue(undefined);
+
+      const result = await controller.logout(mockRequest, mockResponse);
+
+      expect(mockUserService.removeRefreshToken).toHaveBeenCalledWith('507f1f77bcf86cd799439011');
+      expect(mockResponse.clearCookie).toHaveBeenCalledWith('refresh_token');
+      expect(result).toEqual({ message: 'Logged out successfully' });
+    });
+
+    it('should handle logout with network timeout error', async () => {
+      const timeoutError = new Error('Network timeout');
+      timeoutError.name = 'MongoNetworkTimeoutError';
+      mockUserService.removeRefreshToken.mockRejectedValue(timeoutError);
+
+      await expect(controller.logout(mockRequest, mockResponse)).rejects.toThrow('Network timeout');
+      expect(mockUserService.removeRefreshToken).toHaveBeenCalledWith('507f1f77bcf86cd799439011');
+      expect(mockResponse.clearCookie).not.toHaveBeenCalled();
+    });
+
+    it('should handle logout with invalid user ID format', async () => {
+      const invalidIdError = new Error('Invalid ObjectId');
+      mockUserService.removeRefreshToken.mockRejectedValue(invalidIdError);
+
+      await expect(controller.logout(mockRequest, mockResponse)).rejects.toThrow('Invalid ObjectId');
+      expect(mockUserService.removeRefreshToken).toHaveBeenCalledWith('507f1f77bcf86cd799439011');
+      expect(mockResponse.clearCookie).not.toHaveBeenCalled();
+    });
+
+    it('should handle logout when user has additional properties', async () => {
+      mockRequest.user = {
+        userId: '507f1f77bcf86cd799439011',
+        email: 'test@example.com',
+        roles: ['USER', 'ADMIN'],
+        isActive: true,
+        lastLogin: new Date(),
+        additionalProperty: 'value',
+      };
+
+      const result = await controller.logout(mockRequest, mockResponse);
+
+      expect(mockUserService.removeRefreshToken).toHaveBeenCalledWith('507f1f77bcf86cd799439011');
+      expect(mockResponse.clearCookie).toHaveBeenCalledWith('refresh_token');
+      expect(result).toEqual({ message: 'Logged out successfully' });
+    });
+
+    it('should verify logout returns a promise', async () => {
+      const result = controller.logout(mockRequest, mockResponse);
+
+      expect(result).toBeInstanceOf(Promise);
+      await result;
     });
   });
 });
