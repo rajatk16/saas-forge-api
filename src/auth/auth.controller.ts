@@ -15,7 +15,6 @@ declare module 'express' {
     user: {
       userId: string;
       email: string;
-      roles: string[];
       isActive: boolean;
     };
   }
