@@ -32,11 +32,15 @@ export class TenantController {
   }
 
   @Patch('/tenant/:id')
+  @UseGuards(JwtAuthGuard, TenantRolesGuard)
+  @TenantRoles(TenantRole.OWNER, TenantRole.ADMIN)
   async updateTenant(@Param('id') id: string, @Body() body: TenantNameDto) {
     return this.tenantService.updateTenant(id, body.name);
   }
 
   @Delete('/tenant/:id')
+  @UseGuards(JwtAuthGuard, TenantRolesGuard)
+  @TenantRoles(TenantRole.OWNER)
   async deleteTenant(@Param('id') id: string) {
     return this.tenantService.deleteTenant(id);
   }
@@ -65,5 +69,18 @@ export class TenantController {
     }
 
     return this.tenantService.removeUserFromTenant(tenantId, body.userId);
+  }
+
+  @Post('/tenant/:id/join')
+  @UseGuards(JwtAuthGuard)
+  async requestToJoinTenant(@Req() req: Request, @Param('id') tenantId: string) {
+    return this.tenantService.requestToJoinTenant(req.user.userId, tenantId);
+  }
+
+  @Post('/tenant/:id/join/respond')
+  @UseGuards(JwtAuthGuard, TenantRolesGuard)
+  @TenantRoles(TenantRole.OWNER, TenantRole.ADMIN)
+  async respondToJoinRequest(@Param('id') tenantId: string, @Body() body: { userId: string; approval: boolean }) {
+    return this.tenantService.respondToJoinRequest(tenantId, body.userId, body.approval);
   }
 }
